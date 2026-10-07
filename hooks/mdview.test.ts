@@ -21,6 +21,8 @@ const PANE = {
 
 type World = {
   files: Record<string, string | { bytes: string }>
+  links: Record<string, string>
+  dirs: string[]
   env: Record<string, string>
   runs: string[][]
   prompts: string[]
@@ -36,7 +38,7 @@ type World = {
   clock?: MockClock
   dropPrompt?: string
 }
-const world = (files: World['files'], env: Record<string, string> = {}): World => ({ files, env, cwd: '/w', runs: [], prompts: [], configs: [], mtimes: {}, opened: [], invalidated: 0, closed: 0 })
+const world = (files: World['files'], env: Record<string, string> = {}): World => ({ files, links: {}, dirs: [], env, cwd: '/w', runs: [], prompts: [], configs: [], mtimes: {}, opened: [], invalidated: 0, closed: 0 })
 
 // The engine beneath a started session: a tiny file system, the working directory, and the pane calls.
 const start = async ($: { session: { start: (e: never) => Promise<unknown> } }, on: On, w: World) => {
@@ -52,10 +54,15 @@ const start = async ($: { session: { start: (e: never) => Promise<unknown> } }, 
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } as never
   })
   on('session.cwd', () => ({ value: w.cwd }) as never)
+  // a symbolic link (`links`) is followed, as the engine does: the stat is of where it leads, a folder there `dir`
   on('fs.stat', ($, e) => {
-    const f = w.files[e.path]
+    const real = w.links[e.path] ?? e.path
+    const realPath = e.resolve ? { realPath: real } : {}
+    const isLink = real !== e.path
+    if (w.dirs.includes(real)) return { value: { kind: 'dir', size: 0, mtimeMs: 0, isLink, ...realPath } } as never
+    const f = w.files[real]
     if (f === undefined) throw new Error(`ENOENT: ${e.path}`)
-    return { value: { kind: 'file', size: typeof f === 'string' ? f.length : 100, mtimeMs: w.mtimes[e.path] ?? 1, isLink: false } } as never
+    return { value: { kind: 'file', size: typeof f === 'string' ? f.length : 100, mtimeMs: w.mtimes[real] ?? 1, isLink, ...realPath } } as never
   })
   on('fs.read', ($, e) => {
     const f = w.files[e.path]
@@ -587,6 +594,21 @@ describe('click modes', () => {
     await ui.press({ key: 'r0', link: { href: 'file:///w/README.md' } })
     expect(w.opened).toEqual(['README.md'])
     expect(w.runs).toEqual([])
+    await ui.unmount()
+  })
+
+  test('clickOpens: app never hands `open` a link named .md that leads to a script or an app', { options: { clickOpens: 'app' } }, async ($, on) => {
+    const w = world({ '/w/run.command': 'rm -rf ~', '/w/real.md': '# Real' }, {})
+    w.links = { '/w/notes.md': '/w/run.command', '/w/app.md': '/Applications/Evil.app', '/w/ok.md': '/w/real.md' }
+    w.dirs = ['/Applications/Evil.app']
+    await start($, on, w)
+    const ui = await $.ui.mount(reply('See `notes.md`, `app.md` and `ok.md`.'))
+    await ui.press({ key: 'r0', link: { href: 'file:///w/notes.md' } })
+    await ui.press({ key: 'r0', link: { href: 'file:///w/app.md' } })
+    expect(w.runs.filter(r => r[0] === 'open')).toEqual([])
+    // a link to a real markdown file still opens in the app, by the path it lands on
+    await ui.press({ key: 'r0', link: { href: 'file:///w/ok.md' } })
+    expect(w.runs.filter(r => r[0] === 'open')).toEqual([['open', '/w/real.md']])
     await ui.unmount()
   })
 
