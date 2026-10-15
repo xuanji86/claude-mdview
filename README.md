@@ -6,7 +6,7 @@
 Click a `.md` path Claude mentions and read the file beside the conversation, with headings, tables, code and
 pictures. Then point at any block and tell Claude what to change.
 
-[![Version](https://img.shields.io/badge/version-1.0.0-d77757.svg)](https://github.com/xuanji86/claude-mdview/releases)
+[![Version](https://img.shields.io/badge/version-1.0.1-d77757.svg)](https://github.com/xuanji86/claude-mdview/releases)
 [![Claude Code mod](https://img.shields.io/badge/Claude%20Code-mod-c678dd.svg)](https://code.claude.com/docs/en/plugins/mods/overview)
 [![Terminals](https://img.shields.io/badge/Ghostty%20·%20iTerm2%20·%20Warp-4a4a4a.svg)](#terminals)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4eba65.svg)](LICENSE)
@@ -71,7 +71,7 @@ If the file shifts under an open bar, the bar follows its block; if the block is
 
 ## Install
 
-Needs **Claude Code 2.1.287 or later** (the release that brought mods; tested on 2.1.288), in the **fullscreen** layout
+Needs **Claude Code 2.1.287 or later** (the release that brought mods; tested on 2.1.300), in the **fullscreen** layout
 (`/tui fullscreen`), the only layout where a click reaches a mod. Mods are early access, and their API may change
 between releases.
 

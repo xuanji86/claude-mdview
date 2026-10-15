@@ -619,6 +619,7 @@ export const register: Register = (on, options) => {
   // lazy: a prompt another plugin rewrites before it enters is never matched and reads "waiting" until five newer
   // edits push it out; matching the text that entered (a prompt.submit hook beneath the others) would find it
   on('turn.start', async ($, e, next) => {
+    if (e.agentId) return next(e) // a subagent's turn: its brief may quote the edit, but the turn is the main loop's
     const p = (await read($, pending)).find(x => x.turn === null && e.text.includes(x.text))
     if (p) await update($, pending, list => (list ?? []).map(x => (x.id === p.id ? { ...x, turn: e.turnId } : x)))
     return next(e)

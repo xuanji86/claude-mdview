@@ -448,6 +448,8 @@ describe('editing', () => {
     expect(await under('blk0-2')).not.toContain('Claude')
     await $.turn.complete(turn('earlier')) // a turn already running ends first: not this edit's
     expect(await under('blk0-1')).toContain('✶ Waiting for Claude…')
+    await $.turn.start({ text: `Apply this: ${w.prompts[0]!}`, turnId: 's1', agentId: 'ag1' } as never) // a subagent's brief quoting it
+    expect(await under('blk0-1')).toContain('✶ Waiting for Claude…')
     await $.turn.start({ text: w.prompts[0]!, turnId: 't1' })
     expect(await under('blk0-1')).toContain('✶ Claude is editing…')
 

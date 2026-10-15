@@ -1,6 +1,6 @@
 {
   "name": "mdview",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Click a .md path in the Claude Code conversation to read it rendered as markdown beside the session, pictures included, and point at any block to have Claude edit it.",
   "author": {
     "name": "Anji Xu",
