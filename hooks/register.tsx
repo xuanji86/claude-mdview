@@ -342,11 +342,18 @@ const warpUrl = (ref: Ref): string => {
 // Opens a file where `mode` says: the pane, Warp's own viewer beside the session, or the app macOS opens it with; when
 // either of the last two cannot, the pane. Says where it went. For the pane, the open starts before any await (see show).
 async function openRef($: EngineInterface, ref: Ref, mode: Mode): Promise<string> {
-  // `open` launches whatever it is handed (a .command runs, a .app starts): the app takes markdown files only
-  if (mode === 'app' && !MD.test(ref.abs)) mode = 'pane'
+  // `open` launches whatever it is handed (a .command runs, a .app starts): the app takes markdown files only, judged
+  // by where the path lands, not how it is spelled, so a link named `x.md` that leads to a script or an app goes to
+  // the pane. `open` is then handed the landing path, so the link cannot be repointed between the check and the open.
+  let abs = ref.abs
+  if (mode === 'app') {
+    const st = await $.fs.stat(ref.abs, { resolve: true }).catch(() => null)
+    if (st?.kind === 'file' && st.realPath !== undefined && MD.test(st.realPath)) abs = st.realPath
+    else mode = 'pane'
+  }
   // lazy: the fallback opens the pane after `open` has answered, which on a narrow terminal counts as the mod's own
   // open and waits for room; checking for an app first (LaunchServices) would keep it the click's
-  if (mode !== 'pane' && (await openWith($, [mode === 'warp' ? warpUrl(ref) : ref.abs]))) return MODE_TEXT[mode]
+  if (mode !== 'pane' && (await openWith($, [mode === 'warp' ? warpUrl(ref) : abs]))) return MODE_TEXT[mode]
   return `${MODE_TEXT.pane}, ${await show($, ref)}`
 }
 
