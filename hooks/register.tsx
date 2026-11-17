@@ -477,7 +477,7 @@ export const register: Register = (on, options) => {
   on('tool.call', async ($, e, next) => {
     const result = await next(e)
     const file = (e as { file_path?: unknown }).file_path
-    if ((e.tool === 'Write' || e.tool === 'Edit') && typeof file === 'string') {
+    if ('tool' in e && (e.tool === 'Write' || e.tool === 'Edit') && typeof file === 'string') {
       if (MD.test(file) || (isOpen && (await read($, doc))?.path === file)) $.ui.invalidate('ui.render')
       const isRunning = (p: MdviewPending) => p.path === file && p.turn !== null && p.done === null && !p.changed
       if (!result.deny && !result.isError && (await read($, pending)).some(isRunning))
@@ -497,7 +497,7 @@ export const register: Register = (on, options) => {
     } catch (err) {
       return { result: `Could not open it: ${err instanceof Error ? err.message : String(err)}` }
     }
-  })
+  }).catch((_, e, next) => (next.called ? next(e) : { result: 'Could not open it: mdview failed reading the path' }))
 
   on('command.run', { command: 'md' }, async ($, e) => {
     const arg = e.args.trim().replace(/^(['"`])(.*)\1$/, '$2')
@@ -752,7 +752,7 @@ export const register: Register = (on, options) => {
         {/* the file, as Claude Code names one in its rows: ⏺ name, then where and how big, dim */}
         <Box flexDirection="row">
           <Text>{'⏺ '}</Text>
-          <Text bold>{basename(d.path)}</Text>
+          <Text weight="semibold">{basename(d.path)}</Text>
           <Text dimColor wrap="truncate-start">{`  ${tilde(dir)}${meta}`}</Text>
         </Box>
         <Box flexDirection="row" flexWrap="wrap" columnGap={1} marginBottom={1}>
