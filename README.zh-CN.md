@@ -5,7 +5,7 @@
 **Markdown,就在你正看着的地方渲染出来。**<br>
 单击 Claude 提到的 `.md` 路径，文件就在对话旁边展开：标题、表格、代码、图片一应俱全。想改哪一块，指着它告诉 Claude 就行。
 
-[![Version](https://img.shields.io/badge/version-1.0.1-d77757.svg)](https://github.com/xuanji86/claude-mdview/releases)
+[![Version](https://img.shields.io/badge/version-1.0.2-d77757.svg)](https://github.com/xuanji86/claude-mdview/releases)
 [![Claude Code mod](https://img.shields.io/badge/Claude%20Code-mod-c678dd.svg)](https://code.claude.com/docs/en/plugins/mods/overview)
 [![Terminals](https://img.shields.io/badge/Ghostty%20·%20iTerm2%20·%20Warp-4a4a4a.svg)](#终端)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4eba65.svg)](LICENSE)
