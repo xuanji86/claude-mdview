@@ -6,11 +6,13 @@ import { blocksOf, bmpPixels, fitCells, halfBlocks, html, paginate, pngSize, sec
 import { hrefOf, linkify, refOf, resolveRef } from './links'
 
 const PNG_640x480 = 'iVBORw0KGgoAAAANSUhEUgAAAoAAAAHgCAIAAAA='
+const PNG_1x1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC' // a whole one: an Image from bytes is checked
 // 2×2 24-bit BMPs, red green / blue white: rows stored top-down, and bottom-up
 const BMP_TOP_DOWN = 'Qk1GAAAAAAAAADYAAAAoAAAAAgAAAP7///8BABgAAAAAABAAAAATCwAAEwsAAAAAAAAAAAAAAAD/AP8AAAD/AAD///8AAA=='
 const BMP_BOTTOM_UP = 'Qk1GAAAAAAAAADYAAAAoAAAAAgAAAAIAAAABABgAAAAAABAAAAATCwAAEwsAAAAAAAAAAAAA/wAA////AAAAAP8A/wAAAA=='
 const bytesOf = (b64: string) => (Uint8Array as unknown as { fromBase64: (s: string) => Uint8Array }).fromBase64(b64)
 const FULL = { columns: 160, rows: 40, isFullscreen: true }
+const SEND = { options: { editSends: 'send' } }
 const reply = (text: string, viewport: object = FULL, requestId = 'm1') =>
   ({ plugin: 'mdview', surface: 'terminal', component: 'AssistantMessage', requestId, props: { text, isFirstOfReply: true }, viewport }) as never
 const PANE = {
@@ -24,6 +26,8 @@ type World = {
   env: Record<string, string>
   runs: string[][]
   prompts: string[]
+  filled: string[]
+  copied: string[]
   configs: [string, unknown][]
   mtimes: Record<string, number>
   openFails?: boolean
@@ -36,7 +40,7 @@ type World = {
   clock?: MockClock
   dropPrompt?: string
 }
-const world = (files: World['files'], env: Record<string, string> = {}): World => ({ files, env, cwd: '/w', runs: [], prompts: [], configs: [], mtimes: {}, opened: [], invalidated: 0, closed: 0 })
+const world = (files: World['files'], env: Record<string, string> = {}): World => ({ files, env, cwd: '/w', runs: [], prompts: [], filled: [], copied: [], configs: [], mtimes: {}, opened: [], invalidated: 0, closed: 0 })
 
 // The engine beneath a started session: a tiny file system, the working directory, and the pane calls.
 const start = async ($: { session: { start: (e: never) => Promise<unknown> } }, on: On, w: World) => {
@@ -46,7 +50,7 @@ const start = async ($: { session: { start: (e: never) => Promise<unknown> } }, 
   on('process.run', ($, e) => {
     w.runs.push([...e.argv])
     const out = e.argv[e.argv.indexOf('--out') + 1]
-    if (e.argv.includes('--out') && out) w.files[out] = { bytes: BMP_TOP_DOWN }
+    if (e.argv.includes('--out') && out) w.files[out] = { bytes: e.argv.includes('-Z') ? PNG_1x1 : BMP_TOP_DOWN }
     if (e.argv[0] === 'open' && w.openFails) return { value: { exitCode: 1, stdout: '', stderr: 'No application knows how to open it.', isStdoutTruncated: false, isStderrTruncated: false } } as never
     const stdout = e.argv.includes('-g') ? 'x\n  pixelWidth: 100\n  pixelHeight: 50\n' : ''
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } } as never
@@ -63,6 +67,8 @@ const start = async ($: { session: { start: (e: never) => Promise<unknown> } }, 
     return { value: typeof f === 'string' ? f : { base64: f.bytes } } as never
   })
   on('prompt.submit', ($, e) => (w.prompts.push(e.text), w.dropPrompt ? { drop: w.dropPrompt } : { text: e.text }) as never)
+  on('prompt.fill', ($, e) => (w.filled.push(e.text), { isFilled: true }) as never)
+  on('ui.copy', ($, e) => (w.copied.push(e.text), { value: { isCopied: true } }) as never)
   on('config.set', ($, e) => (w.configs.push([e.key, e.value]), w.configAnswer ?? { value: e.value }) as never)
   on('command.register', () => ({ value: { command: 'md' } }) as never)
   on('tool.register', () => ({ value: { tool: 'mcp__mdview__show' } }) as never)
@@ -376,13 +382,25 @@ describe('pictures', () => {
     await pane.unmount()
   })
 
-  test('iTerm2 is no kitty-protocol terminal: its pictures are half blocks too', async ($, on) => {
-    const w = world({ '/w/a.md': '![shot](s.png)', '/w/s.png': { bytes: PNG_640x480 } }, { TERM_PROGRAM: 'iTerm.app', TERM: 'xterm-256color' })
+  test('iTerm2 before 3.5 draws no pictures of its own: half blocks there too', async ($, on) => {
+    const w = world({ '/w/a.md': '![shot](s.png)', '/w/s.png': { bytes: PNG_640x480 } }, { TERM_PROGRAM: 'iTerm.app', TERM_PROGRAM_VERSION: '3.4.23', TERM: 'xterm-256color' })
     await start($, on, w)
     await $.command.run({ command: 'md', args: 'a.md' } as never)
     const pane = await $.ui.mount(PANE)
     expect(await pane.find({ type: 'Raster' })).toBeDefined()
     expect(await pane.find({ type: 'Image' })).toBeUndefined()
+    await pane.unmount()
+  })
+
+  test('iTerm2 3.5 and later gets its own pictures, from PNG bytes scaled down by sips', async ($, on) => {
+    const w = world({ '/w/a.md': '![shot](s.png)', '/w/s.png': { bytes: PNG_640x480 } }, { TERM_PROGRAM: 'iTerm.app', TERM_PROGRAM_VERSION: '3.6.1' })
+    await start($, on, w)
+    w.env.TMPDIR = '/t'
+    await $.command.run({ command: 'md', args: 'a.md' } as never)
+    const pane = await $.ui.mount(PANE)
+    const img = await pane.find({ type: 'Image' })
+    expect(img?.props.source).toEqual({ png: PNG_1x1 }) // what the test's sips writes for a scaled copy
+    expect(w.runs.some(r => r.includes('-Z') && r.includes('/w/s.png'))).toBe(true)
     await pane.unmount()
   })
 
@@ -414,7 +432,7 @@ describe('pictures', () => {
 describe('editing', () => {
   const field = (pane: unknown) => pane as { input: (t: { key: string; text: string }) => Promise<unknown> }
 
-  test('blocks that begin alike are told apart by their whole text', async ($, on) => {
+  test('blocks that begin alike are told apart by their whole text', SEND, async ($, on) => {
     const w = world({ '/w/a.md': '# T\n\n```bash\necho a\n```\n\n```bash\necho b\n```' }, {})
     await start($, on, w)
     await $.command.run({ command: 'md', args: 'a.md' } as never)
@@ -435,7 +453,7 @@ describe('editing', () => {
     await pane.unmount()
   })
 
-  test('an edit from ✎ shows under its block and follows its own turn: waiting, editing, then Updated, gone 5 s later', async ($, on) => {
+  test('an edit from ✎ shows under its block and follows its own turn: waiting, editing, then Updated, gone 5 s later', SEND, async ($, on) => {
     const w = world({ '/w/a.md': '# One\n\nalpha\n\nbeta' }, {})
     await start($, on, w)
     await $.command.run({ command: 'md', args: 'a.md' } as never)
@@ -476,7 +494,7 @@ describe('editing', () => {
     await pane.unmount()
   })
 
-  test('an edit whose prompt does not enter leaves no line under its block', async ($, on) => {
+  test('an edit whose prompt does not enter leaves no line under its block', SEND, async ($, on) => {
     const w = world({ '/w/a.md': '# One\n\nalpha' }, {})
     w.dropPrompt = 'blocked by a hook'
     await start($, on, w)
@@ -498,7 +516,7 @@ describe('editing', () => {
     await pane.unmount()
   })
 
-  test('the edit bar stays on its block when the file changes above it, and closes when the block is gone', async ($, on) => {
+  test('the edit bar stays on its block when the file changes above it, and closes when the block is gone', SEND, async ($, on) => {
     const w = world({ '/w/a.md': '# One\n\nalpha\n\nbeta' }, {})
     await start($, on, w)
     await $.command.run({ command: 'md', args: 'a.md' } as never)
@@ -519,7 +537,7 @@ describe('editing', () => {
     await pane.unmount()
   })
 
-  test('each block has a ✎ that shows on hover; it sends the instruction to Claude with the lines and how they begin', async ($, on) => {
+  test('each block has a ✎ that shows on hover; it sends the instruction to Claude with the lines and how they begin', SEND, async ($, on) => {
     const w = world({ '/w/a.md': '# One\n\nalpha\n\n# Two\n\nbeta  gamma\ndelta' }, {})
     await start($, on, w)
     await $.command.run({ command: 'md', args: 'a.md' } as never)
@@ -533,6 +551,45 @@ describe('editing', () => {
     await pane.press({ key: 'edit-cancel' })
     expect(await pane.find({ key: 'edit-input' })).toBeUndefined()
     expect(w.prompts.length).toBe(1)
+    await pane.unmount()
+  })
+})
+
+describe('fill, copy, long text', () => {
+  test('by default ✎ puts the edit in the prompt box; it reads so until the turn that runs it, even reworded', async ($, on) => {
+    const w = world({ '/w/a.md': '# One\n\nalpha' }, {})
+    await start($, on, w)
+    await $.command.run({ command: 'md', args: 'a.md' } as never)
+    const pane = await $.ui.mount(PANE)
+    await pane.press({ key: 'edit-0-1' })
+    await (pane as unknown as { input: (t: { key: string; text: string }) => Promise<unknown> }).input({ key: 'edit-input', text: 'shorter' })
+    expect(w.filled).toEqual(['Edit lines 3-3 of `/w/a.md` in the section "One", which begin "alpha": shorter'])
+    expect(w.prompts).toEqual([])
+    const under = async () => JSON.stringify((await pane.find({ key: 'blk0-1' }))?.children ?? null)
+    expect(await under()).toContain('In your prompt')
+    await $.turn.start({ text: 'Edit lines 3-3 of `/w/a.md` in the section "One", which begin "alpha": much shorter, please', turnId: 't1' })
+    expect(await under()).toContain('✶ Claude is editing…')
+    await pane.unmount()
+  })
+  test('⧉ copies a block as the file has it', async ($, on) => {
+    const w = world({ '/w/a.md': '# One\n\n**alpha** [x](b.md)\n\n```\ncode\n```' }, {})
+    await start($, on, w)
+    await $.command.run({ command: 'md', args: 'a.md' } as never)
+    const pane = await $.ui.mount(PANE)
+    await pane.press({ key: 'copy-0-1' })
+    await pane.press({ key: 'copy-0-2' })
+    expect(w.copied).toEqual(['**alpha** [x](b.md)', '```\ncode\n```'])
+    await pane.unmount()
+  })
+  test('a long block is one Markdown element, no longer cut at 9,000 characters', async ($, on) => {
+    const long = Array.from({ length: 400 }, (_, i) => `line ${i} ${'x'.repeat(40)}`).join('\n')
+    const w = world({ '/w/a.md': `# One\n\n${long}` }, {})
+    await start($, on, w)
+    await $.command.run({ command: 'md', args: 'a.md' } as never)
+    const pane = await $.ui.mount(PANE)
+    const md = await pane.findAll({ type: 'Markdown' })
+    expect(md.filter(m => String(m.props.text).includes('line 0 ')).length).toBe(1)
+    expect(md.some(m => String(m.props.text).includes('line 0 ') && String(m.props.text).includes('line 399 '))).toBe(true)
     await pane.unmount()
   })
 })

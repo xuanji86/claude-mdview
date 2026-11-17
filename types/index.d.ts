@@ -12,7 +12,8 @@ export type MdviewEdit = { path: string; line: number; hash: string }
 // An edit sent to Claude from a block's ✎: the block, the prompt as sent, the turn that runs it (null until it starts),
 // whether that turn wrote the file, and when the turn ended (null while it runs). The pane shows it under its block
 // until a few seconds after.
-export type MdviewPending = { id: string; path: string; line: number; hash: string; text: string; turn: string | null; changed: boolean; done: number | null }
+// `text`: how the edit's prompt begins, matched in the turn that runs it; `isFilled`: put in the prompt box, not sent yet
+export type MdviewPending = { id: string; path: string; line: number; hash: string; text: string; isFilled: boolean; turn: string | null; changed: boolean; done: number | null }
 
 declare module 'claude-code' {
   // `edit` and `pending` are Shaped: each atom names a shape, bumped whenever its type changes, so a reload declines

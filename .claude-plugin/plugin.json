@@ -1,6 +1,6 @@
 {
   "name": "mdview",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Click a .md path in the Claude Code conversation to read it rendered as markdown beside the session, pictures included, and point at any block to have Claude edit it.",
   "author": {
     "name": "Anji Xu",
@@ -38,6 +38,16 @@
         "app"
       ],
       "default": "warp"
+    },
+    "editSends": {
+      "title": "Edit sends",
+      "description": "What Enter in a block's ✎ bar does: prompt = puts the edit in your prompt box to read and send yourself; send = sends it to Claude at once",
+      "type": "string",
+      "options": [
+        "prompt",
+        "send"
+      ],
+      "default": "prompt"
     }
   }
 }

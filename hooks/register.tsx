@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderNode } from 'claude-code'
+import type { EngineInterface, Register, RenderNode, RenderSurface } from 'claude-code'
 
 import type { MdviewDoc, MdviewEdit, MdviewFind, MdviewPending } from '../types'
 import { blocksOf, bmpPixels, clean, fitCells, halfBlocks, hashOf, html, paginate, pngSize, sectionAt, sections, split, tables } from './doc'
@@ -12,11 +12,12 @@ const rev = atom({ plugin: 'mdview', key: 'rev' } as const, 0)
 const toc = atom({ plugin: 'mdview', key: 'toc' } as const, false)
 const find = atom({ plugin: 'mdview', key: 'find' } as const, null as MdviewFind | null)
 const edit = atom({ plugin: 'mdview', key: 'edit' } as const, null as MdviewEdit | null, { shape: 'line+hash' })
-const pending = atom({ plugin: 'mdview', key: 'pending' } as const, [] as MdviewPending[], { shape: 'id+text+turn+changed+done' })
+const pending = atom({ plugin: 'mdview', key: 'pending' } as const, [] as MdviewPending[], { shape: 'id+text+filled+turn+changed+done' })
 const cwdHistory = atom({ plugin: 'mdview', key: 'cwds' } as const, [] as string[])
 
-const TEXT_MAX = 9_000 // a Markdown or Code element takes at most 10,000 characters
 const PAGE_MAX = 60_000 // a page of a long file: a whole tree tops out near 100k characters
+const PNG_EDGE = 1200 // iTerm2's pictures: the longest side, in pixels, of the copy sent
+const PNG_B64_MAX = Math.floor((2 * 1024 * 1024 * 4) / 3) // an Image's bytes: 2 MiB decoded
 const MAYBE_MD = /\.(?:md|markdown|mdx)\b/i
 const MARK = '↗' // after each path a click opens here, so it reads as clickable
 const PNG = /\.png$/i
@@ -26,13 +27,13 @@ const ANY_IMAGE = /!\[([^\]\n]*)\]\(/g
 
 type Part =
   | { kind: 'md'; text: string; hrefs: string[] }
-  | { kind: 'img'; file: string; alt: string; columns: number; rows: number }
+  | { kind: 'img'; file: string; png?: string; alt: string; columns: number; rows: number } // `png`: bytes, for iTerm2
   | { kind: 'raster'; file: string; cells: string; alt: string; columns: number; rows: number }
   | { kind: 'code'; source: string; path: string; startLine: number }
 // A stretch the pane jumps to: a section of a markdown file, or a run of lines of any other.
 // A blank-line separated block of the file (a paragraph, list, table, fence, heading): the lines it spans, how it
 // begins, and what draws it.
-type Block = { line: number; end: number; first: string; hash: string; parts: Part[] }
+type Block = { line: number; end: number; first: string; hash: string; source: string; parts: Part[] }
 type Unit = { level: number; title: string; slug: string; line: number; end: number; plain: string; blocks: Block[] }
 type View = { units: Unit[]; pages: number[]; lines: number } | { note: string }
 
@@ -47,7 +48,8 @@ const known = new Set<string>() // files seen to exist
 const cwdOf = new Map<string, string>()
 const views = new Map<string, View>() // lazy: the last 8 files drawn, by path, mtime and width
 const sizes = new Map<string, { width: number; height: number } | null>() // lazy: a picture's size, never re-read
-let pictures = false // the terminal draws an Image itself (kitty's graphics protocol); elsewhere pictures are Rasters
+let pictures = false // the terminal draws an Image itself (kitty's graphics protocol, iTerm2's); elsewhere pictures are Rasters
+let pngBytes = false // iTerm2's own protocol: an Image from PNG bytes, not a file name
 let isWarp = false // Warp has a Markdown viewer of its own, a click away from the pane
 // What a click on a path in the conversation opens (userConfig): outside Warp `clickOpens`, in Warp `clickOpensInWarp`.
 type Mode = 'pane' | 'warp' | 'app'
@@ -56,6 +58,10 @@ const SETTING = {
   other: { key: 'clickOpens', choices: ['pane', 'app'] as Mode[] },
 } as const
 const modes: Record<keyof typeof SETTING, Mode> = { warp: 'warp', other: 'pane' }
+// What Enter in the ✎ bar does (userConfig `editSends`): `prompt` puts the edit in the prompt box to send yourself,
+// `send` sends it at once.
+const EDIT_SENDS = ['prompt', 'send'] as const
+let editSends: (typeof EDIT_SENDS)[number] = 'prompt'
 const here = (): keyof typeof SETTING => (isWarp ? 'warp' : 'other')
 const modeHere = (): Mode => modes[here()]
 const asMode = (value: unknown, choices: readonly Mode[], fallback: Mode): Mode => choices.find(m => m === value) ?? fallback
@@ -69,6 +75,11 @@ let made = 0
 
 const tilde = (p: string): string => (home && (p === home || p.startsWith(home + '/')) ? '~' + p.slice(home.length) : p)
 // lines as an editor counts them: a final newline ends the last line rather than starting one
+// "3.6.1" is at least 3.5; a version it cannot read is not
+export const atLeast = (version: string, major: number, minor: number): boolean => {
+  const [a = NaN, b = 0] = version.split('.').map(Number)
+  return a > major || (a === major && b >= minor)
+}
 const lineCount = (s: string): number => (s ? s.replace(/\n$/, '').split('\n').length : 0)
 const plainTitle = (t: string): string => t.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[`*~]/g, '')
 const note = (text: string): View => ({ note: text })
@@ -126,8 +137,8 @@ async function linkFiles($: EngineInterface, text: string, bases: readonly strin
   return hrefs.size ? { text: out, hrefs: [...hrefs] } : null
 }
 
-const mdParts = (text: string, hrefs: readonly string[]): Part[] =>
-  split(text, TEXT_MAX).map(t => ({ kind: 'md', text: t, hrefs: hrefs.filter(h => t.includes(`](${h})`)).slice(0, 256) }))
+// One Markdown element: since Claude Code 2.1.326 an element may be any length (a drawing, 100k characters in all).
+const mdPart = (text: string, hrefs: readonly string[]): Part => ({ kind: 'md', text, hrefs: hrefs.filter(h => text.includes(`](${h})`)).slice(0, 256) })
 
 // macOS's own image tool: what converts and scales any picture format here. Null where it is missing or fails.
 async function sips($: EngineInterface, args: string[]): Promise<string | null> {
@@ -167,7 +178,15 @@ async function imagePart($: EngineInterface, src: string, alt: string, base: str
       file = `${tmp}/mdview-${[...ref.abs].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7)}.png` // left in place: the terminal reads it
       if ((await sips($, ['-s', 'format', 'png', ref.abs, '--out', file])) === null) return null
     }
-    return { kind: 'img', file, alt, ...fitCells(size.width, size.height, Math.min(paneColumns - 2, 80), 40) }
+    const cells = fitCells(size.width, size.height, Math.min(paneColumns - 2, 80), 40)
+    if (!pngBytes) return { kind: 'img', file, alt, ...cells }
+    // iTerm2 takes bytes (at most 2 MiB): a copy scaled to what the cells can show, read back
+    const small = `${tmp}/mdview-${made++}.png`
+    if ((await sips($, ['-s', 'format', 'png', '-Z', String(PNG_EDGE), ref.abs, '--out', small])) === null) return null
+    const bytes = await $.fs.read(small, { as: 'bytes' }).catch(() => null)
+    void $.process.run(['rm', '-f', small]).catch(() => null)
+    // a tree whose Image bytes are no PNG is refused whole: anything else falls back to half blocks
+    if (bytes && bytes.base64.startsWith('iVBORw0KGgoAAAANSUhEUg') /* signature, then IHDR */ && bytes.base64.length <= PNG_B64_MAX) return { kind: 'img', file: ref.abs, png: bytes.base64, alt, ...cells }
   }
   const box = fitCells(size.width, size.height, Math.min(paneColumns - 2, 80), 24) // lazy: 24 rows keeps a page's cells small; tall pictures shrink
   const bmp = `${tmp}/mdview-${made++}.bmp`
@@ -191,7 +210,7 @@ async function sectionParts($: EngineInterface, text: string, path: string): Pro
     buf = []
     if (!md) return
     const linked = await linkFiles($, md, [base], { self: path, anyLink: true })
-    parts.push(...mdParts(linked?.text ?? md, linked?.hrefs ?? []))
+    parts.push(mdPart(linked?.text ?? md, linked?.hrefs ?? []))
   }
   let fence: string | null = null
   for (const line of tables(html(text), paneColumns - 2).split('\n')) {
@@ -218,7 +237,7 @@ async function build($: EngineInterface, path: string): Promise<View> {
   if (IMAGE.test(path)) {
     const img = await imagePart($, path, basename(path), '/')
     return img
-      ? { units: [{ level: 0, title: '', slug: '', line: 1, end: 1, plain: '', blocks: [{ line: 1, end: 1, first: '', hash: '', parts: [img] }] }], pages: [0], lines: 0 }
+      ? { units: [{ level: 0, title: '', slug: '', line: 1, end: 1, plain: '', blocks: [{ line: 1, end: 1, first: '', hash: '', source: '', parts: [img] }] }], pages: [0], lines: 0 }
       : note(`This picture can't be drawn here. Open ${link} instead.`)
   }
   let raw: string
@@ -233,10 +252,10 @@ async function build($: EngineInterface, path: string): Promise<View> {
   if (!MD.test(path)) {
     const units: Unit[] = []
     let line = 1
-    for (const source of split(src, TEXT_MAX)) {
+    for (const source of split(src, PAGE_MAX)) { // units a page can hold
       const end = line + source.split('\n').length - 1
       const parts: Part[] = [{ kind: 'code', source, path, startLine: line }]
-      units.push({ level: 0, title: '', slug: '', line, end, plain: source.toLowerCase(), blocks: [{ line, end, first: '', hash: hashOf(source), parts }] })
+      units.push({ level: 0, title: '', slug: '', line, end, plain: source.toLowerCase(), blocks: [{ line, end, first: '', hash: hashOf(source), source, parts }] })
       line = end + 1
     }
     return { units, pages: paginate(units.map(u => u.plain.length), PAGE_MAX), lines: lineCount(src) }
@@ -249,13 +268,13 @@ async function build($: EngineInterface, path: string): Promise<View> {
       const parts = await sectionParts($, b.text, path)
       const first = [...(b.text.split('\n').find(l => l.trim())?.trim().replace(/\s+/g, ' ') ?? '')]
       const begins = first.length > 40 ? `${first.slice(0, 40).join('')}…` : first.join('')
-      if (parts.length) blocks.push({ line: b.line, end: b.end, first: begins, hash: hashOf(b.text), parts })
+      if (parts.length) blocks.push({ line: b.line, end: b.end, first: begins, hash: hashOf(b.text), source: b.text, parts })
     }
     units.push({ level: s.level, title: plainTitle(s.title), slug: s.slug, line: s.line, end: 0, plain: s.text.toLowerCase(), blocks })
   }
   const lines = lineCount(src)
   units.forEach((u, i) => (u.end = (units[i + 1]?.line ?? lines + 1) - 1))
-  if (!units.length) units.push({ level: 0, title: '', slug: '', line: 1, end: 1, plain: '', blocks: [{ line: 1, end: 1, first: '', hash: '', parts: [{ kind: 'md', text: '*(empty file)*', hrefs: [] }] }] })
+  if (!units.length) units.push({ level: 0, title: '', slug: '', line: 1, end: 1, plain: '', blocks: [{ line: 1, end: 1, first: '', hash: '', source: '', parts: [{ kind: 'md', text: '*(empty file)*', hrefs: [] }] }] })
   const size = (u: Unit) =>
     u.blocks.flatMap(b => b.parts).reduce((n, p) => n + (p.kind === 'md' ? p.text.length : p.kind === 'code' ? p.source.length : p.kind === 'raster' ? p.cells.length : 100), 0)
   return { units, pages: paginate(units.map(size), PAGE_MAX), lines }
@@ -384,23 +403,39 @@ async function openWith($: EngineInterface, args: string[]): Promise<boolean> {
   return false
 }
 
-// ✎ then Enter: the instruction goes to Claude as your own prompt, naming the file, the block's lines and how it begins;
-// its progress shows under the block (see turn.start). A prompt that does not enter says why, and leaves no progress.
+// ✎ then Enter: the instruction, naming the file, the block's lines and how it begins, goes in the prompt box for you
+// to send (editSends: prompt), or to Claude as your own prompt (send). Its progress shows under the block, the turn
+// that runs it found by how the prompt begins (see turn.start), so a change to the instruction in the box still
+// counts. A prompt that does not enter says why, and leaves no progress.
+// lazy: an edit put in the box and never sent reads "in your prompt" until five newer edits push it out
 async function sendEdit($: EngineInterface, path: string, u: Unit, b: Block, instruction: string) {
   await update($, edit, () => null)
   const what = instruction.trim()
   if (!what) return
   const where = u.title ? ` in the section "${u.title}"` : ''
   const begins = b.first ? `, which begin "${b.first}"` : ''
-  const text = `Edit lines ${b.line}-${b.end} of \`${tilde(path)}\`${where}${begins}: ${what}`
+  const head = `Edit lines ${b.line}-${b.end} of \`${tilde(path)}\`${where}${begins}:`
+  const text = `${head} ${what}`
   const id = `${await $.clock.now()}-${b.hash}`
+  const isFilled = editSends === 'prompt'
   // a block sent again replaces its earlier line; lazy: the five latest edits are shown, an older one drops
-  const mine: MdviewPending = { id, path, line: b.line, hash: b.hash, text, turn: null, changed: false, done: null }
+  const mine: MdviewPending = { id, path, line: b.line, hash: b.hash, text: head, isFilled, turn: null, changed: false, done: null }
   await update($, pending, list => [...(list ?? []).filter(p => p.path !== path || p.hash !== b.hash), mine].slice(-5))
-  const sent = await $.prompt.submit({ text, asUser: true }).catch((err: unknown) => ({ drop: err instanceof Error ? err.message : String(err) }))
-  if (sent.drop === undefined) return
+  const drop = isFilled
+    ? await $.prompt.fill({ text }).then(
+        r => (r.isFilled ? undefined : (r.refusal ?? 'the prompt box did not take it')),
+        (err: unknown) => (err instanceof Error ? err.message : String(err)),
+      )
+    : (await $.prompt.submit({ text, asUser: true }).catch((err: unknown) => ({ drop: err instanceof Error ? err.message : String(err) }))).drop
+  if (drop === undefined) return
   await update($, pending, list => (list ?? []).filter(p => p.id !== id))
-  $.ui.toast(`mdview: not sent (${sent.drop})`.slice(0, 200))
+  $.ui.toast(`mdview: not ${isFilled ? 'put in the prompt' : 'sent'} (${drop})`.slice(0, 200))
+}
+
+// ⧉ on a block: its text as the file has it, to the clipboard of the surface the press came from.
+async function copyBlock($: EngineInterface, b: Block, surface: RenderSurface) {
+  const r = await $.ui.copy({ text: b.source, surface }).catch((err: unknown) => ({ isCopied: false, reason: String(err) }))
+  $.ui.toast(r.isCopied ? `Copied lines ${b.line}-${b.end}` : `mdview: not copied${'reason' in r && r.reason ? ` (${r.reason})` : ''}`.slice(0, 200))
 }
 
 // Enter in the find bar: the next section holding the text, wrapping around; a new text starts from the first.
@@ -419,6 +454,8 @@ async function findNext($: EngineInterface, query: string) {
 }
 
 export const register: Register = (on, options) => {
+  const sends = (options as Record<string, unknown> | undefined)?.editSends
+  editSends = EDIT_SENDS.find(m => m === sends) ?? 'prompt'
   for (const where of ['warp', 'other'] as const) {
     const { key, choices } = SETTING[where]
     modes[where] = asMode((options as Record<string, unknown> | undefined)?.[key], choices, choices[0]!)
@@ -426,13 +463,17 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await homeDir($)
     await remember($, e.cwd)
-    // As Claude Code decides it: kitty or Ghostty, or forced on (iTerm2 3.7 draws kitty pictures; Warp can't place them)
+    // As Claude Code decides it: kitty or Ghostty, iTerm2 3.5 and later (from bytes), or forced on (the kitty
+    // protocol, which reads files; Warp can't place them)
     const forced = (await $.env.get('CLAUDE_CODE_FORCE_TERMINAL_IMAGES')) ?? ''
-    pictures =
-      (forced !== '' && !/^(0|false|no|off)$/i.test(forced)) ||
+    const isForced = forced !== '' && !/^(0|false|no|off)$/i.test(forced)
+    const isKitty =
       /kitty/i.test((await $.env.get('TERM')) ?? '') ||
       /ghostty/i.test((await $.env.get('TERM_PROGRAM')) ?? '') ||
       !!(await $.env.get('KITTY_WINDOW_ID'))
+    const isIterm = (await $.env.get('TERM_PROGRAM')) === 'iTerm.app' && atLeast((await $.env.get('TERM_PROGRAM_VERSION')) ?? '', 3, 5)
+    pictures = isForced || isKitty || isIterm
+    pngBytes = isIterm && !isForced && !isKitty
     isWarp = (await $.env.get('TERM_PROGRAM')) === 'WarpTerminal'
     tmp = ((await $.env.get('TMPDIR')) ?? '/tmp').replace(/\/+$/, '') || '/tmp'
     await $.command.register({ name: 'md', description: 'Show a file rendered in a side pane; `mode` switches what a click opens', argumentHint: '<path>[#heading|:line] | mode [warp|pane|app]' })
@@ -558,14 +599,7 @@ export const register: Register = (on, options) => {
           <Text>{e.props.isFirstOfReply ? '⏺' : ' '}</Text>
         </Box>
         <Box flexDirection="column" flexGrow={1}>
-          {split(linked.text, TEXT_MAX).map((text, i) => {
-            const hrefs = linked.hrefs.filter(h => text.includes(`](${h})`)).slice(0, 256)
-            return hrefs.length ? (
-              <Markdown key={`r${i}`} text={text} pressableLinks={hrefs} onLinkPress={follow} />
-            ) : (
-              <Markdown key={`r${i}`} text={text} />
-            )
-          })}
+          <Markdown key="r0" text={linked.text} pressableLinks={linked.hrefs.slice(0, 256)} onLinkPress={follow} />
         </Box>
       </Box>
     )
@@ -621,7 +655,7 @@ export const register: Register = (on, options) => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId) return next(e) // a subagent's turn: its brief may quote the edit, but the turn is the main loop's
     const p = (await read($, pending)).find(x => x.turn === null && e.text.includes(x.text))
-    if (p) await update($, pending, list => (list ?? []).map(x => (x.id === p.id ? { ...x, turn: e.turnId } : x)))
+    if (p) await update($, pending, list => (list ?? []).map(x => (x.id === p.id ? { ...x, isFilled: false, turn: e.turnId } : x)))
     return next(e)
   })
 
@@ -689,7 +723,11 @@ export const register: Register = (on, options) => {
       if (!at) return []
       const body =
         p.done === null ? (
+          p.isFilled ? (
+          <Text dimColor>In your prompt · enter to send</Text>
+        ) : (
           <Text color="claude">{p.turn ? '✶ Claude is editing…' : '✶ Waiting for Claude…'}</Text>
+        )
         ) : p.changed ? (
           <Text color="success">Updated</Text>
         ) : (
@@ -729,7 +767,7 @@ export const register: Register = (on, options) => {
         )
       if (p.kind === 'img')
         return Image ? (
-          <Image key={key} source={{ file: p.file, format: 'png' }} columns={p.columns} rows={p.rows} alt={p.alt} />
+          <Image key={key} source={p.png ? { png: p.png } : { file: p.file, format: 'png' }} columns={p.columns} rows={p.rows} alt={p.alt} />
         ) : (
           <Text key={key} dimColor>{`[picture: ${p.alt}]`}</Text>
         )
@@ -810,18 +848,17 @@ export const register: Register = (on, options) => {
                         />
                       </Box>
                       <Box flexDirection="row" columnGap={1} paddingLeft={2}>
-                        <Text dimColor>enter to send to Claude ·</Text>
+                        <Text dimColor>{editSends === 'prompt' ? 'enter to put it in your prompt ·' : 'enter to send to Claude ·'}</Text>
                         <Button key="edit-cancel" plain dimColor label="cancel" onPress={() => update($, edit, () => null)} />
                       </Box>
                     </Box>
                   )}
                   {b.parts.map((p, m) => draw(p, keyOf(i, firstPart[k]! + m)))}
                   {progress.filter(x => x.i === i && x.k === k).map(x => x.line)}
-                  {Input && (
-                    <Box position="absolute" top={0} right={0} display="none" hover={{ display: 'flex' }}>
-                      <Button key={`edit-${i}-${k}`} plain dimColor label="✎" onPress={() => update($, edit, () => ({ path: d.path, line: b.line, hash: b.hash }))} />
-                    </Box>
-                  )}
+                  <Box position="absolute" top={0} right={0} display="none" hover={{ display: 'flex' }} columnGap={1}>
+                    {b.source !== '' && <Button key={`copy-${i}-${k}`} plain dimColor label="⧉" onPress={press => copyBlock($, b, press.surface)} />}
+                    {Input && <Button key={`edit-${i}-${k}`} plain dimColor label="✎" onPress={() => update($, edit, () => ({ path: d.path, line: b.line, hash: b.hash }))} />}
+                  </Box>
                 </Box>
               ))}
             </Box>,

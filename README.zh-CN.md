@@ -5,7 +5,7 @@
 **Markdown,就在你正看着的地方渲染出来。**<br>
 单击 Claude 提到的 `.md` 路径，文件就在对话旁边展开：标题、表格、代码、图片一应俱全。想改哪一块，指着它告诉 Claude 就行。
 
-[![Version](https://img.shields.io/badge/version-1.0.2-d77757.svg)](https://github.com/xuanji86/claude-mdview/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-d77757.svg)](https://github.com/xuanji86/claude-mdview/releases)
 [![Claude Code mod](https://img.shields.io/badge/Claude%20Code-mod-c678dd.svg)](https://code.claude.com/docs/en/plugins/mods/overview)
 [![Terminals](https://img.shields.io/badge/Ghostty%20·%20iTerm2%20·%20Warp-4a4a4a.svg)](#终端)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4eba65.svg)](LICENSE)
@@ -28,7 +28,7 @@ Claude 常把计划、报告、笔记写成 markdown 文件，再把路径告诉
 | --- | --- |
 | **一键就读** | 指向真实文件的 `.md` 路径后面会带上 `↗`,反引号里的、裸写的、markdown 链接、和中文紧贴的都认得。回复里有，`Read` / `Write` / `Edit` 工具行下面和你自己的消息下面也有。`路径:42` 和 `路径#标题` 直接跳到那里 |
 | **是阅读器，不是一堆字** | 按标题分节，有目录(`t`)、查找(`f`),长文件分成几部分(`p` `n`),文档之间的链接在 pane 里接着打开，还能返回(`b`) |
-| **终端里看图** | 在 Ghostty、kitty、iTerm2 3.7+ 里是终端自己画的清晰原图，其他终端是彩色半格色块。PNG、JPEG、GIF、HEIC 都行 |
+| **终端里看图** | 在 Ghostty、kitty、iTerm2 3.5+ 里是终端自己画的清晰原图，其他终端是彩色半格色块。PNG、JPEG、GIF、HEIC 都行 |
 | **指哪改哪** | 鼠标停在某一块上，它会高亮，并出现 `✎`。写下要怎么改，回车;Claude 会收到文件、行号和这一块的开头，这一块下面实时显示改到哪了 |
 | **实时刷新** | Claude 写的文件立即刷新;外部修改最多 1.5 秒 |
 | **每个终端用顺手的查看器** | 单击可以开 mdview 的 pane、Warp 自带的 Markdown 查看器(在会话旁边分栏),或者 macOS 给 `.md` 设定的默认程序。用 `/md mode` 切换 |
@@ -48,9 +48,9 @@ Claude 常把计划、报告、笔记写成 markdown 文件，再把路径告诉
 </td>
 <td width="38%" valign="top">
 
-**悬停**在段落、列表、表格、代码块或图片上，它会高亮，右端出现 `✎`。
+**悬停**在段落、列表、表格、代码块或图片上，它会高亮，右端出现 `⧉ ✎`:`⧉` 按文件原文复制这一块。
 
-**点 `✎`** 写下修改，比如"改成清单"。**回车**后它作为你的消息发出，带上文件、行号和这一块的开头。
+**点 `✎`** 写下修改，比如"改成清单"。**回车**后它填进你的输入框，带上文件、行号和这一块的开头;看一眼、想改就改，再发出去。设 `editSends: send` 则回车直接发出。
 
 **Claude 动手改。** 这一块下面会挂一行进度，就像 Claude Code 在自己的条目下挂结果那样：前面还有别的回合在跑时是 `✶ Waiting for Claude…`,轮到它时变成 `✶ Claude is editing…`,结束后 Claude 写了这个文件就显示 `Updated`,没写就是 `No changes made`。pane 原地刷新，这行几秒后消失。连发几处，各自挂各自的进度;消息发不出去会提示原因。
 
@@ -110,6 +110,7 @@ pane 在文件名下面用一行暗色文字列出这些按键，每一个也都
 | --- | --- | --- |
 | `clickOpens` | `pane`:mdview 的 pane · `app`:macOS 为 `.md` 设定的默认程序 | `pane` |
 | `clickOpensInWarp` | `warp`:Warp 自带的 Markdown 查看器，在右侧分栏 · `pane` · `app` | `warp` |
+| `editSends` | `prompt`:`✎` 输入条回车后填进你的输入框 · `send`:直接发出 | `prompt` |
 
 默认程序或 Warp 打不开时，会改为打开 pane。默认程序总是从文件开头打开;`:行号` 只在 Warp 查看器和 pane 里有效。要换默认程序，在 Finder 里：显示简介 › 打开方式 › 全部更改。
 
@@ -118,11 +119,11 @@ pane 在文件名下面用一行暗色文字列出这些按键，每一个也都
 | 终端 | 图片 | 默认单击打开 |
 | --- | --- | --- |
 | **Ghostty**、**kitty** | 清晰：终端自己画的原图 | mdview 的 pane |
-| **iTerm2 3.7+** | 只对 iTerm2 设 `CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1` 后清晰(见下);不设则是半格色块 | mdview 的 pane |
+| **iTerm2 3.5+** | 清晰：终端自己画的原图(Claude Code 2.1.326+,fullscreen 界面) | mdview 的 pane |
 | **Warp** | pane 里是半格色块;Warp 自带查看器里清晰 | Warp 查看器，右侧分栏 |
 | 其他 | 彩色半格色块(`▀`,每格两个像素) | mdview 的 pane |
 
-Claude Code 只在它信得过的终端里画图:kitty 和 Ghostty。iTerm2 3.7 支持同一套 kitty 图片协议，包括 Unicode 占位符，所以可以强制开启。只对 iTerm2 生效的写法，放进 `~/.zshrc`:
+Claude Code 只在它信得过的终端里画图:kitty、Ghostty,以及 2.1.326 起的 iTerm2 3.5+。更早的 Claude Code 上，可以让 iTerm2 3.7 改走 kitty 图片协议强制开启。只对 iTerm2 生效的写法，放进 `~/.zshrc`:
 
 ```sh
 [[ $TERM_PROGRAM == iTerm.app ]] && export CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1
@@ -139,7 +140,8 @@ mdview 只读、只画，只在你要求时动手。`claude plugin validate .` �
 | 读文件 | 文件路径出现在对话里(确认文件存在)，或者你打开它 |
 | 运行 `sips` | 画非 PNG 图片，或任何半格色块图时：转换到 `$TMPDIR` 下的文件(半格色块用的读完即删) |
 | 运行 `open` | 你在 `app` 或 `warp` 模式下单击时，且只对 markdown 文件。Claude 的 show 工具从不调用它，所以没法借它运行脚本或启动程序 |
-| 发送消息 | 你在 `✎` 输入条里按回车时，只发你写的那句话 |
+| 填入或发送消息 | 你在 `✎` 输入条里按回车时，只用你写的那句话：填进输入框，或在 `editSends: send` 时直接发出 |
+| 复制到剪贴板 | 你点 `⧉` 时，只复制那一块 |
 | 改设置 | 你运行 `/md mode` 时 |
 
 它不发任何网络请求，不跨会话保存任何东西，也不自己调用模型。
@@ -149,8 +151,8 @@ mdview 只读、只画，只在你要求时动手。`claude plugin validate .` �
 - **做不到真全屏。** mod 的 pane 只能停靠在对话旁边，对话区有最小宽度;剩下的宽度 mdview 全要了。
 - **单击要 fullscreen 界面。** 普通界面下用 `/md`。
 - **终端只会画文字。** 数学公式、mermaid、标题字号按原文显示。Warp 自带的查看器能画 mermaid。
-- **重画的回复。** 含可点路径的回复是 mdview 重画的，复制时会带上 `⏺`。
-- **长度。** 单个 markdown 元素最多 1 万字符，整个 pane 约 10 万，所以长文件要分几部分。
+- **重画的回复。** 含可点路径的回复是 mdview 重画的，复制时会带上 `⏺`。pane 里用 `⧉` 能干净地复制一块。
+- **长度。** 整个 pane 约 10 万字符，所以长文件要分几部分。
 - **抢先体验。** mod 接口可能随 Claude Code 版本变化。
 
 ## 开发
