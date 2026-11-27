@@ -615,6 +615,18 @@ describe('click modes', () => {
     await pane.unmount()
   })
 
+  test('open the original never hands `open` a picture link that leads to a script', async ($, on) => {
+    const w = world({ '/w/a.md': '# A\n\n![shot](s.png)', '/w/run.command': { bytes: PNG_640x480 } }, { TERM_PROGRAM: 'WarpTerminal' })
+    w.links = { '/w/s.png': '/w/run.command' }
+    await start($, on, w)
+    await $.command.run({ command: 'md', args: 'a.md' } as never)
+    const pane = await $.ui.mount(PANE)
+    const original = await pane.find({ type: 'Button', text: '⎿  open the original' })
+    await pane.press({ key: String(original?.key) })
+    expect(w.runs.filter(r => r[0] === 'open')).toEqual([])
+    await pane.unmount()
+  })
+
   test('in Warp a click on a path in the conversation opens Warp\'s viewer, at the line it names', async ($, on) => {
     const w = world({ '/w/README.md': '# R' }, { TERM_PROGRAM: 'WarpTerminal' })
     await start($, on, w)

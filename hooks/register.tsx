@@ -361,18 +361,9 @@ const warpUrl = (ref: Ref): string => {
 // Opens a file where `mode` says: the pane, Warp's own viewer beside the session, or the app macOS opens it with; when
 // either of the last two cannot, the pane. Says where it went. For the pane, the open starts before any await (see show).
 async function openRef($: EngineInterface, ref: Ref, mode: Mode): Promise<string> {
-  // `open` launches whatever it is handed (a .command runs, a .app starts): the app takes markdown files only, judged
-  // by where the path lands, not how it is spelled, so a link named `x.md` that leads to a script or an app goes to
-  // the pane. `open` is then handed the landing path, so the link cannot be repointed between the check and the open.
-  let abs = ref.abs
-  if (mode === 'app') {
-    const st = await $.fs.stat(ref.abs, { resolve: true }).catch(() => null)
-    if (st?.kind === 'file' && st.realPath !== undefined && MD.test(st.realPath)) abs = st.realPath
-    else mode = 'pane'
-  }
   // lazy: the fallback opens the pane after `open` has answered, which on a narrow terminal counts as the mod's own
   // open and waits for room; checking for an app first (LaunchServices) would keep it the click's
-  if (mode !== 'pane' && (await openWith($, [mode === 'warp' ? warpUrl(ref) : abs]))) return MODE_TEXT[mode]
+  if (mode !== 'pane' && (await openWith($, mode === 'warp' ? { url: warpUrl(ref) } : { file: ref.abs, kind: 'markdown' }))) return MODE_TEXT[mode]
   return `${MODE_TEXT.pane}, ${await show($, ref)}`
 }
 
@@ -402,9 +393,25 @@ async function back($: EngineInterface) {
   void scrollTo($, null)
 }
 
-// Hands a file or URL to macOS (`open`): the app it opens that kind with; false, after a toast, when that fails.
-async function openWith($: EngineInterface, args: string[]): Promise<boolean> {
-  const run = await $.process.run(['open', ...args], { timeoutMs: 10_000 }).catch((err: unknown) => ({ exitCode: -1, stderr: String(err) }))
+// What `open` may be handed for a file: judged by where its path lands.
+const OPENS = { markdown: MD, picture: IMAGE }
+
+// Hands a URL, or a file of the kind named, to macOS (`open`): the app it opens that kind with; false, after a toast,
+// when that fails. `open` launches whatever it is handed (a .command runs, a .app starts), so a file goes only when
+// its path lands on a regular file of that kind (a link named `x.md` that leads to a script or an app does not), and
+// `open` gets the landing path, so the link cannot be repointed between the check and the open.
+async function openWith($: EngineInterface, target: { url: string } | { file: string; kind: keyof typeof OPENS }): Promise<boolean> {
+  let arg: string
+  if ('url' in target) arg = target.url
+  else {
+    const st = await $.fs.stat(target.file, { resolve: true }).catch(() => null)
+    if (st?.kind !== 'file' || st.realPath === undefined || !OPENS[target.kind].test(st.realPath)) {
+      $.ui.toast(`mdview: not opened, ${st?.realPath ?? target.file} is not a ${target.kind} file`)
+      return false
+    }
+    arg = st.realPath
+  }
+  const run = await $.process.run(['open', arg], { timeoutMs: 10_000 }).catch((err: unknown) => ({ exitCode: -1, stderr: String(err) }))
   if (run.exitCode === 0) return true
   $.ui.toast(`mdview: could not open it (${run.stderr.trim().slice(0, 120) || `exit ${run.exitCode}`})`)
   return false
@@ -750,7 +757,7 @@ export const register: Register = (on, options) => {
       Input && units.length > 0 && <Button key="find-toggle" plain dimColor hotkey="f" label="find" onPress={() => update($, find, x => (x ? null : { query: '', at: 0, hits: 0 }))} />,
       page > 0 && <Button key="prev" plain dimColor hotkey="p" label="previous part" onPress={() => moveTo($, page - 1, null)} />,
       page < pageCount - 1 && <Button key="next" plain dimColor hotkey="n" label="next part" onPress={() => moveTo($, page + 1, null)} />,
-      isWarp && <Button key="warp" plain dimColor hotkey="w" label="Warp" onPress={() => openWith($, [warpUrl({ abs: d.path, frag: '' })])} />,
+      isWarp && <Button key="warp" plain dimColor hotkey="w" label="Warp" onPress={() => openWith($, { url: warpUrl({ abs: d.path, frag: '' }) })} />,
       <Button key="close" plain dimColor role="dismiss" hotkey="q" label="close" onPress={() => $.ui.close({ id: PANE })} />,
     ].filter(Boolean)
     // items in a dim row, a dot between each
@@ -767,7 +774,7 @@ export const register: Register = (on, options) => {
         return Raster ? (
           <Box key={`${key}-box`} flexDirection="column" alignItems="flex-start">
             <Raster key={key} cells={p.cells} columns={p.columns} rows={p.rows} />
-            <Button key={`${key}-original`} plain dimColor label="⎿  open the original" onPress={() => openWith($, [p.file])} />
+            <Button key={`${key}-original`} plain dimColor label="⎿  open the original" onPress={() => openWith($, { file: p.file, kind: 'picture' })} />
           </Box>
         ) : (
           <Text key={key} dimColor>{`[picture: ${p.alt}]`}</Text>
