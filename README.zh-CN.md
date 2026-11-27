@@ -5,7 +5,7 @@
 **Markdown,就在你正看着的地方渲染出来。**<br>
 单击 Claude 提到的 `.md` 路径，文件就在对话旁边展开：标题、表格、代码、图片一应俱全。想改哪一块，指着它告诉 Claude 就行。
 
-[![Version](https://img.shields.io/badge/version-1.1.0-d77757.svg)](https://github.com/xuanji86/claude-mdview/releases)
+[![Version](https://img.shields.io/badge/version-1.1.1-d77757.svg)](https://github.com/xuanji86/claude-mdview/releases)
 [![Claude Code mod](https://img.shields.io/badge/Claude%20Code-mod-c678dd.svg)](https://code.claude.com/docs/en/plugins/mods/overview)
 [![Terminals](https://img.shields.io/badge/Ghostty%20·%20iTerm2%20·%20Warp-4a4a4a.svg)](#终端)
 [![License: MIT](https://img.shields.io/badge/license-MIT-4eba65.svg)](LICENSE)
@@ -139,7 +139,7 @@ mdview 只读、只画，只在你要求时动手。`claude plugin validate .` �
 | --- | --- |
 | 读文件 | 文件路径出现在对话里(确认文件存在)，或者你打开它 |
 | 运行 `sips` | 画非 PNG 图片，或任何半格色块图时：转换到 `$TMPDIR` 下的文件(半格色块用的读完即删) |
-| 运行 `open` | 你在 `app` 或 `warp` 模式下单击时，且只对 markdown 文件。Claude 的 show 工具从不调用它，所以没法借它运行脚本或启动程序 |
+| 运行 `open` | 你在 `app` 或 `warp` 模式下单击时，或点图片下的 `⎿ open the original` 时;只对真正是 markdown 或图片的文件，按路径最终指向的位置判断，所以名为 `x.md` 的链接没法借它运行脚本或启动程序。Claude 的 show 工具从不调用它 |
 | 填入或发送消息 | 你在 `✎` 输入条里按回车时，只用你写的那句话：填进输入框，或在 `editSends: send` 时直接发出 |
 | 复制到剪贴板 | 你点 `⧉` 时，只复制那一块 |
 | 改设置 | 你运行 `/md mode` 时 |
